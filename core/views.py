@@ -92,9 +92,12 @@ class StockUpdateAPIView(generics.UpdateAPIView):
             return Response({'error': 'Stock not found'}, status=status.HTTP_404_NOT_FOUND)
         
         # Update the stock object with the request data
-        serializer = self.get_serializer(stock, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
+        # the stock_on_hand field is the only field that can be updated and it should be increamented not replaced
+        
+        stock.stock_on_hand += int(request.data.get('stock_on_hand'))
+        stock.save()
+        serializer = self.get_serializer(stock)
+        
         
         # Create stock transaction
         quantity = request.data.get('stock_on_hand')
@@ -107,6 +110,8 @@ class StockUpdateAPIView(generics.UpdateAPIView):
         )
 
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    
 
 class StockTransactionListAPIView(generics.ListAPIView):
     queryset = StockTransaction.objects.all()

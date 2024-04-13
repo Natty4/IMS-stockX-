@@ -62,7 +62,7 @@ class Product(models.Model):
         return self.sales_transactions.aggregate(total=Sum('quantity_sold')).get('total') or 0
 
 class Stock(models.Model):
-    product = models.OneToOneField(Product, on_delete=models.CASCADE, related_name='stock')
+    product = models.OneToOneField(Product, on_delete=models.CASCADE, related_name='stock', unique=True)
     stock_on_hand = models.PositiveIntegerField("Quantity", default=0, blank=True)
     low_stock_threshold = models.PositiveIntegerField(default=1, blank=True)
     created_by = models.CharField(max_length=100, default="admin")
