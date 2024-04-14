@@ -25,7 +25,7 @@ class ProductCreateAPIView(generics.CreateAPIView):
     serializer_class = ProductSerializer
 class ProductListAPIView(generics.ListAPIView):
     queryset = Product.objects.all()
-    serializer_class = ProductSerializer
+    serializer_class = ProductListSerializer
 class ProductDetailAPIView(generics.RetrieveAPIView):
     queryset = Product.objects.all()
     serializer_class = ProductDetailSerializer
@@ -43,6 +43,22 @@ class ProductByBrandListAPIView(generics.ListAPIView):
     def get_queryset(self):
         brand = self.kwargs['brand']
         return Product.objects.filter(brand=brand)
+   
+
+class ProductCreateAPIView(generics.CreateAPIView):
+    serializer_class = ProductSerializer
+    # if the product intial qunatity is provided, create a stock instance for the product with the initial quantity else create the product without a stock instance
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+        initial_quantity = validated_data.get('initial_quantity', 0)
+        product = serializer.save()
+        
+        if initial_quantity > 0:
+            Stock.objects.create(product=product, stock_on_hand=initial_quantity, created_by=validated_data['created_by'])
+            StockTransaction.objects.create(product=product, quantity=initial_quantity, stock_type='1', modified_by=validated_data['created_by'])
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
     
 class StockCreateAPIView(generics.CreateAPIView):
     serializer_class = StockSerializer
@@ -190,38 +206,46 @@ class ProductPerformanceAPIView(generics.ListAPIView):
             total_stock_value = total_stock_on_hand * Stock.objects.first().product.cost_price
 
             # Get best selling product
-            best_selling_product = SalesTransaction.objects.values('product__code').annotate(total_sold=Sum('quantity_sold')).order_by('-total_sold').first()
+            # best_selling_product = SalesTransaction.objects.values('product__code').annotate(total_sold=Sum('quantity_sold')).order_by('-total_sold').first()
 
             # Get list of least selling products with their minimum sold quantities
-            least_selling_product = {}
-            stock_products = []
+            least_selling = {}
+            best_selling = {}
+            product_sales = {}
             all_products = Stock.objects.all()
-            min = 1
-
-            # The least selling product should be a product that has never been sold if there or products that have been sold least unit/quantity of times among the stocks
-            # simply list all products that are on the stock and that have been sold or not
+            all_sales_transactions = SalesTransaction.objects.all()
             for product in all_products:
-                stock_products.append(product.product.code)
-
-            for product in stock_products:
-                if SalesTransaction.objects.filter(product__code=product).exists():
-                    least_selling_product[product] = SalesTransaction.objects.filter(product__code=product).aggregate(total_sold=Sum('quantity_sold'))['total_sold']
-                    
-                else:
-                    
-                    least_selling_product[product] = min
-            least_selling_product = {k: v for k, v in sorted(least_selling_product.items(), key=lambda item: item[1])}
-            print(least_selling_product)
-            for k, v in sorted(least_selling_product.items()):
-                least_selling_product = {k: v}
-                break
+                product_sales[product.product.code] = 0
+            for product in product_sales:
+                for sale in all_sales_transactions:
+                    if sale.product.code == product:
+                        product_sales[product] += sale.quantity_sold
+            
+            if product_sales:
+                sorted_product_sales = dict(sorted(product_sales.items(), key=lambda item: item[1]))
+                min_sales = min(sorted_product_sales.values())
+                max_sales = max(sorted_product_sales.values())
+                
+                least_selling_products = [product for product, sales in sorted_product_sales.items() if sales == min_sales]
+                best_selling_products = [product for product, sales in sorted_product_sales.items() if sales == max_sales]
+                
+                least_selling['products'] = least_selling_products
+                least_selling['quantity_sold'] = min_sales
+                best_selling['products'] = best_selling_products
+                best_selling['quantity_sold'] = max_sales
+            else:
+                least_selling['products'] = []
+                least_selling['quantity_sold'] = None
+                best_selling['products'] = []
+                best_selling['quantity_sold'] = None
+            
             return {
                 'total_stock_in': total_stock_in,
                 'total_stock_out': total_stock_out,
                 'total_stock_on_hand': total_stock_on_hand,
                 'total_stock_value': total_stock_value,
-                'best_selling_product': best_selling_product,
-                'least_selling_product': least_selling_product
+                'best_selling_product': best_selling,
+                'least_selling_product': least_selling
             }
         except Exception as e:
             return {

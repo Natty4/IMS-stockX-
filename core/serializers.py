@@ -25,7 +25,13 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         exclude = ['created_at', 'updated_at', 'is_active']
-        
+class ProductListSerializer(serializers.ModelSerializer):
+    category = CategorySerializer()
+    brand = BrandSerializer()
+    colors = ColorSerializer(many=True)
+    class Meta:
+        model = Product
+        fields = '__all__'   
 class StockSerializer(serializers.ModelSerializer):
     class Meta:
         model = Stock
@@ -42,7 +48,7 @@ class StockTransactionSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
 class SalesTransactionListSerializer(serializers.ModelSerializer):
-    product = ProductSerializer()
+    product = ProductListSerializer()
 
     class Meta:
         model = SalesTransaction
@@ -56,7 +62,7 @@ class LowStockProductSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
 class StockTransactionListSerializer(serializers.ModelSerializer):
-    product = ProductSerializer()
+    product = ProductListSerializer()
     class Meta:
         model = StockTransaction
         fields = '__all__'
@@ -71,7 +77,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
 class StockDetailSerializer(serializers.ModelSerializer):
-    product = ProductSerializer()
+    product = ProductListSerializer()
     
     class Meta:
         model = Stock

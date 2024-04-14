@@ -3,10 +3,11 @@ import os
 import logging
 import requests
 import json
+from PIL import Image
 from typing import List
 from tabulate import tabulate
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton
+from telegram import InputMediaPhoto, Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -17,8 +18,9 @@ from telegram.ext import (
     MessageHandler,
     PreCheckoutQueryHandler,
     ShippingQueryHandler,
-    filters,
+    filters,   
 )
+from telegram.constants import ParseMode
 
 # Load environment variables
 load_dotenv()
@@ -52,7 +54,98 @@ async def start(update: Update, context: CallbackContext) -> None:
         "/help - Get help"
         
     )
+    
+async def start_slider(update: Update, context: CallbackContext):
+    # Fetch data from the endpoint
+    DEFAULT_IMAGE_URL = "https://simbakids.netlify.app/_nuxt/img/simbakidslogo.104a990.png"
+    response = requests.get(f"{API_ENDPOINT}/stocks-list/")
+    if response.status_code == 200:
+        stocks = response.json()
+    else:
+        await update.message.reply_text("Failed to fetch product data.")
+        return
+    
+    # Initialize lists to store image URLs and captions
+    image_urls = []
+    captions = []
 
+    # Extract image URLs and captions from the fetched data
+    for stock in stocks:
+        product = stock.get('product', {})
+        # Use default link if image URL is None
+        image_url = img if (img := product.get('image_url')) else DEFAULT_IMAGE_URL
+        image_urls.append(image_url)
+
+        caption = f"Name: {product.get('name', 'N/A')}\n"
+        caption += f"Code: {product.get('code', 'N/A')}\n"
+        caption += f"Category: {product.get('category', {}).get('name', 'N/A')}\n"
+        caption += f"Brand: {product.get('brand', {}).get('name', 'N/A')}\n"
+        caption += f"Description: {product.get('description', 'N/A')}\n"
+        caption += f"Initial Quantity: {product.get('initial_quantity', 'N/A')}\n"
+        caption += f"Stock on Hand: {stock.get('stock_on_hand', 'N/A')}\n"
+        
+        caption += f"Colors: {', '.join([color['name'] for color in product.get('colors', [])])}\n"
+        captions.append(caption)
+
+    # Set initial index to 0 if not set
+    current_index = context.user_data.get('current_index', 0)
+    context.user_data['current_index'] = current_index
+
+    # If the current index is not set or the command was triggered directly, send the first image
+    if current_index == 0 or update.message:
+        context.user_data['image_urls'] = image_urls
+        context.user_data['captions'] = captions
+
+        # Send the first image with inline navigation buttons
+        await navigate_slider(update, context)
+    else:
+        # Send the first image with inline navigation buttons
+        await navigate_slider(update, context)
+
+async def navigate_slider(update: Update, context: CallbackContext):
+    DEFAULT_IMAGE_URL = "https://simbakids.netlify.app/_nuxt/img/simbakidslogo.104a990.png"
+    query = update.callback_query
+    current_index = context.user_data.get('current_index', 0)
+    image_urls = context.user_data.get('image_urls', [])
+    captions = context.user_data.get('captions', [])  # List of captions for each image
+
+    if query and query.data == 'prev':
+        current_index = (current_index - 1) % len(image_urls)
+    elif query and query.data == 'next':
+        current_index = (current_index + 1) % len(image_urls)
+
+    context.user_data['current_index'] = current_index
+
+    # Update the inline keyboard based on the current index
+    inline_keyboard = []
+    if current_index > 0:
+        inline_keyboard.append(InlineKeyboardButton("Previous", callback_data="prev"))
+    if current_index < len(image_urls) - 1:
+        inline_keyboard.append(InlineKeyboardButton("Next", callback_data="next"))
+
+    reply_markup = InlineKeyboardMarkup([inline_keyboard])
+    
+    try:
+        message = query.message
+    except AttributeError:
+        message = update.message
+    
+    # replay_photo if the message is sent by the user/first time
+    try:
+        # Edit the message if it's sent by the bot
+        await query.message.edit_media(
+            media=InputMediaPhoto(media=image_urls[current_index], caption=captions[current_index]),
+            reply_markup=reply_markup
+        )
+    except AttributeError:
+        await message.reply_photo(
+            photo=image_urls[current_index],
+            caption=captions[current_index],
+            reply_markup=reply_markup
+        )
+        
+        
+        
 # Handler for /add command to start adding a new product
 async def add_product(update: Update, context: CallbackContext) -> int:
     """Ask user to provide product name."""
@@ -118,31 +211,30 @@ async def add_product_quantity(update: Update, context: CallbackContext) -> int:
 # Function to handle capturing product image URL in conversation
 async def add_product_image(update: Update, context: CallbackContext) -> int:
     """Store product image URL and ask for product category."""
+    message = update.message
     try:
         message = update.message
         if message.text.lower() == 'skip':
             context.user_data['image_url'] = None
-        elif message.photo:
-            # Process the photo and get its URL
-            photo = message.photo[-1]  # Get the largest available photo
-            file_id = photo.file_id
+        elif message.effective_attachment:
+            # Process the attachment and get its URL
+            attachment = message.effective_attachment
+            file_id = attachment.file_id
             file = context.bot.get_file(file_id)
-            print(file)
-            print('_______________________________')
-            print(file.file_path)
             context.user_data['image_url'] = file.file_path
-        # elif message.text.startswith('http') and (message.text.endswith('.jpg') or message.text.endswith('.png')):
-        elif message.text.startswith('http') or message.text.startswith('https'):
+        elif message.text.startswith(('http://', 'https://')) and any(message.text.lower().endswith(ext) for ext in ('.jpg', '.jpeg', '.png')):
+            # Check if the message is a valid image URL
             context.user_data['image_url'] = message.text
         else:
             # Prompt the user to provide a valid image URL or image file
-            await message.reply_text("Please provide a valid image URL or send an image file, or press 'Skip' to continue without adding an image.")
+            await message.reply_text("Please provide a valid image URL, send an image file, or press 'Skip' to continue without adding an image.")
             return ADD_PRODUCT_IMAGE
         
         # Remove the "Skip" button
         reply_markup = ReplyKeyboardRemove()
-        await message.reply_text(".", reply_markup=reply_markup)
-        
+        msg = "Product image received successfully." if context.user_data['image_url'] else "No image provided."
+        await message.reply_text(msg, reply_markup=reply_markup)
+        message = update.message
         # Proceed with the conversation
         categories = requests.get(f"{API_ENDPOINT}/categories/").json()
         categories_keyboard = [
@@ -260,21 +352,17 @@ async def add_product_color(update: Update, context: CallbackContext) -> int:
                 product_details = "\n".join([f"{key}: {value}" for key, value in product_data.items() if key != 'colors'])
                 colors_list = ", ".join(user_colors)
                 response_text = f"Product added successfully!\n\n{product_details}\n\nColors: {colors_list}\n\nResponse from API: {response.status_code} "
-                await update.callback_query.message.reply_text(response_text)
-                # Remove the inline keyboard and accompanying text after displaying the response
-                # await update.callback_query.message.edit_text("Success!")
-                await update.callback_query.message.edit_reply_markup(reply_markup=None)
+                await update.callback_query.message.edit_text(response_text)
                 return ConversationHandler.END
             else:
                 # Failed to create product
                 await update.callback_query.message.reply_text(f"Failed to add product. Error: {response.status_code} {response.json()}")
                 # Remove the inline keyboard and accompanying text after displaying the response
-                await update.callback_query.message.edit_text("Faild!")
-                await update.callback_query.message.edit_reply_markup(reply_markup=None)
+                await update.callback_query.message.edit_text("Faild! ❌")
                 return ConversationHandler.END
         except Exception as e:
             logger.error(f"Error while creating product: {e}")
-            await update.callback_query.message.reply_text("An error occurred while processing your request. Please try again later.")
+            await update.callback_query.message.edit_text("An error occurred while adding the product. Please try again later.")
             # Remove the inline keyboard and accompanying text after displaying the response
             await update.callback_query.message.edit_text("Faild!")
             await update.callback_query.message.edit_reply_markup(reply_markup=None)
@@ -332,7 +420,7 @@ async def start_sale(update: Update, context: CallbackContext) -> int:
         return SALE_CATEGORY
     except Exception as e:
         logger.error(f"Error in starting sale conversation: {e}")
-        await update.message.reply_text("An error occurred. Please try again later.")
+        await update.message.edit_text("An error occurred. Please try again later.")
         return ConversationHandler.END
 
 async def select_sale_category(update: Update, context: CallbackContext) -> int:
@@ -347,9 +435,8 @@ async def select_sale_category(update: Update, context: CallbackContext) -> int:
         products = []
         
         for pro in response.json():
-            if pro['product']['category'] == category_id:
+            if pro['product']['category']['id'] == category_id:
                 products.append(pro['product'])        
-        
         # Store products in the given category in user_data for further processing
         context.user_data['products'] = products
         
@@ -398,7 +485,7 @@ async def select_sale_product(update: Update, context: CallbackContext) -> int:
             await update.callback_query.message.reply_text(f"Enter quantity for {selected_products[0]['name']} - {selected_products[0]['code']}:")
             return SALE_QUANTITY
         else:
-            await update.callback_query.message.reply_text("No products selected.")
+            await update.callback_query.message.edit_text("No products selected.")
             context.user_data.pop('products', None)
             context.user_data.pop('selected_category', None)
             context.user_data.pop('selected_products', None)
@@ -739,7 +826,7 @@ def generate_bar_chart(report_data):
     bars = ax.bar(x, values, color=colors)
     ax.set_xlabel('Stock Type')
     ax.set_ylabel('Quantity')
-    ax.set_title('Stock In vs Stock Out vs Stock On Hand')
+    ax.set_title('Total Stock In vs Stock Out vs Stock On Hand')
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
 
@@ -833,7 +920,7 @@ def generate_top_ten_products_bar_chart(sales_data):
 
 #     return buf_bar_chart   
        
-def generate_stock_bar_chart(API_ENDPOINT):
+def generate_stock_bar_charts(API_ENDPOINT):
     # Fetch data from the /stock-transactions/ endpoint
     stock_transactions_response = requests.get(f"{API_ENDPOINT}/stock-transactions/")
     stock_transactions = stock_transactions_response.json()
@@ -841,11 +928,11 @@ def generate_stock_bar_chart(API_ENDPOINT):
     # Fetch data from the /stocks-list/ endpoint
     stocks_list_response = requests.get(f"{API_ENDPOINT}/stocks-list/")
     stocks_list = stocks_list_response.json()
+
     # Group stock transactions by product
     stock_transactions_by_product = {}
     for transaction in stock_transactions:
         product_code = transaction['product']['code']
-        
         if product_code not in stock_transactions_by_product:
             stock_transactions_by_product[product_code] = []
         stock_transactions_by_product[product_code].append(transaction)
@@ -864,90 +951,106 @@ def generate_stock_bar_chart(API_ENDPOINT):
         stock_on_hand = stock_item['stock_on_hand']
         product_data[product_code] = {'stock_in': stock_in, 'stock_out': stock_out, 'stock_on_hand': stock_on_hand}
 
-    # Prepare data for the grouped bar chart
+    # Prepare data for the grouped bar charts
     product_codes = list(product_data.keys())
-    stock_in_values = [product_data[code]['stock_in'] for code in product_codes]
-    stock_out_values = [product_data[code]['stock_out'] for code in product_codes]
-    stock_on_hand_values = [product_data[code]['stock_on_hand'] for code in product_codes]
+    num_products = len(product_codes)
 
-    # Plot the grouped bar chart
-    labels = [f'{code}' for code in product_codes]
-    x = np.arange(len(labels))
-    width = 0.2  # Width of each bar
+    # Determine the number of charts based on the number of products
+    num_charts = max((num_products + 5) // 6, 1)  # Calculate the number of charts required, ensuring at least 1 chart
 
-    fig, ax = plt.subplots()
-    rects1 = ax.bar(x - width, stock_in_values, width, label='Stock In')
-    rects2 = ax.bar(x, stock_out_values, width, label='Stock Out')
-    rects3 = ax.bar(x + width, stock_on_hand_values, width, label='Stock On Hand')
+    # Generate charts for each group of products
+    charts = []
+    start_index = 0
+    for i in range(num_charts):
+        end_index = min(start_index + 6, num_products)  # Ensure end_index does not exceed num_products
+        group_product_codes = product_codes[start_index:end_index]
+        group_product_data = {code: product_data[code] for code in group_product_codes}
 
-    ax.set_xlabel('Product Code')
-    ax.set_ylabel('Quantity')
-    ax.set_title('Stock Transactions by Product')
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels)
-    ax.legend()
+        # Prepare data for the grouped bar chart
+        group_labels = [f'{code}' for code in group_product_codes]
+        group_stock_in_values = [group_product_data[code]['stock_in'] for code in group_product_codes]
+        group_stock_out_values = [group_product_data[code]['stock_out'] for code in group_product_codes]
+        group_stock_on_hand_values = [group_product_data[code]['stock_on_hand'] for code in group_product_codes]
 
-    plt.xticks(rotation=45)
-    plt.tight_layout()
+        # Plot the grouped bar chart for the current group
+        fig, ax = plt.subplots()
+        x = np.arange(len(group_labels))
+        width = 0.2  # Width of each bar
+        rects1 = ax.bar(x - width, group_stock_in_values, width, label='Stock In')
+        rects2 = ax.bar(x, group_stock_out_values, width, label='Stock Out')
+        rects3 = ax.bar(x + width, group_stock_on_hand_values, width, label='Stock On Hand')
 
-    # Annotate each bar with its respective value
-    for rects in [rects1, rects2, rects3]:
-        for rect in rects:
-            height = rect.get_height()
-            ax.annotate('{}'.format(height),
-                        xy=(rect.get_x() + rect.get_width() / 2, height),
-                        xytext=(0, 3),  # 3 points vertical offset
-                        textcoords="offset points",
-                        ha='center', va='bottom')
+        ax.set_xlabel('Product Code')
+        ax.set_ylabel('Quantity')
+        ax.set_title('Stock Transactions by Product')
+        ax.set_xticks(x)
+        ax.set_xticklabels(group_labels)
+        ax.legend()
 
-    # Save the plot as a PNG image
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    plt.close()
+        plt.xticks(rotation=45)
+        plt.tight_layout()
 
-    buf.seek(0)
-    return buf
+        # Annotate each bar with its respective value
+        for rects in [rects1, rects2, rects3]:
+            for rect in rects:
+                height = rect.get_height()
+                ax.annotate('{}'.format(height),
+                            xy=(rect.get_x() + rect.get_width() / 2, height),
+                            xytext=(0, 3),  # 3 points vertical offset
+                            textcoords="offset points",
+                            ha='center', va='bottom', rotation=90)  # Rotate the annotation text vertically
+
+        # Save the plot as a PNG image
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        plt.close()
+        buf.seek(0)
+        charts.append(buf)
+
+        start_index += 6
+
+    return charts
 
 
-def generate_sales_bar_chart(sales_data):
-    # Aggregate sales data for each product
-    product_sales = {}
-    for transaction in sales_data:
-        product_code = transaction['product']['code']  # Extract product code
-        quantity_sold = transaction['quantity_sold']
-        if product_code not in product_sales:
-            product_sales[product_code] = 0
-        product_sales[product_code] += quantity_sold
+# def generate_sales_bar_chart(sales_data):
+#     # Aggregate sales data for each product
+#     product_sales = {}
+#     for transaction in sales_data:
+#         product_code = transaction['product']['code']  # Extract product code
+#         quantity_sold = transaction['quantity_sold']
+#         if product_code not in product_sales:
+#             product_sales[product_code] = 0
+#         product_sales[product_code] += quantity_sold
 
-    # Extract product codes and quantities for plotting
-    product_codes = list(product_sales.keys())
-    quantities_sold = list(product_sales.values())
+#     # Extract product codes and quantities for plotting
+#     product_codes = list(product_sales.keys())
+#     quantities_sold = list(product_sales.values())
 
-    # Create bar chart
-    fig, ax = plt.subplots()
-    bars = ax.bar(product_codes, quantities_sold)
+#     # Create bar chart
+#     fig, ax = plt.subplots()
+#     bars = ax.bar(product_codes, quantities_sold)
 
-    # Annotate each bar with its quantity
-    for bar, quantity in zip(bars, quantities_sold):
-        height = bar.get_height()
-        ax.annotate(f'{quantity}',
-                    xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 3),  # 3 points vertical offset
-                    textcoords="offset points",
-                    ha='center', va='bottom')
+#     # Annotate each bar with its quantity
+#     for bar, quantity in zip(bars, quantities_sold):
+#         height = bar.get_height()
+#         ax.annotate(f'{quantity}',
+#                     xy=(bar.get_x() + bar.get_width() / 2, height),
+#                     xytext=(0, 3),  # 3 points vertical offset
+#                     textcoords="offset points",
+#                     ha='center', va='bottom')
 
-    ax.set_xlabel('Product Code')
-    ax.set_ylabel('Total Quantity Sold')
-    ax.set_title('Total Sales Quantity for Each Product')
-    ax.grid(True)
+#     ax.set_xlabel('Product Code')
+#     ax.set_ylabel('Total Quantity Sold')
+#     ax.set_title('Total Sales Quantity for Each Product')
+#     ax.grid(True)
 
-    # Save the bar chart visualization as bytes in memory
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    plt.close()  # Close the figure to free memory
-    buf.seek(0)
+#     # Save the bar chart visualization as bytes in memory
+#     buf = io.BytesIO()
+#     plt.savefig(buf, format='png')
+#     plt.close()  # Close the figure to free memory
+#     buf.seek(0)
 
-    return buf
+#     return buf
 
 def generate_sales_time_series_chart(sales_data, start_date=None, end_date=None, product_codes=None):
     # If no filters are provided, use the entire sales dataset
@@ -1089,7 +1192,7 @@ async def reports(update: Update, context: CallbackContext) -> None:
             # Generate the bar chart visualization
             buf_bar = generate_bar_chart(report_data)
             # Send the bar chart visualization to the user with a caption
-            await update.message.reply_photo(buf_bar, caption="Bar Chart: Stock In vs Stock Out")
+            # await update.message.reply_photo(buf_bar, caption="Bar Chart: Stock In vs Stock Out")
 
             # Fetch sales transaction data from the API endpoint
             sales_response = requests.get(f"{API_ENDPOINT}/sales-transactions/")
@@ -1101,21 +1204,28 @@ async def reports(update: Update, context: CallbackContext) -> None:
             # Process and visualize the sales transaction data
             if sales_data:
                 # Generate the sales bar chart visualization
-                buf_sales_chart = generate_sales_bar_chart(sales_data)
+                # buf_sales_chart = generate_sales_bar_chart(sales_data)
                 
                 # Send the sales bar chart visualization to the user with a caption
-                await update.message.reply_photo(buf_sales_chart, caption="Total Sales Quantity for Each Product")
+                # await update.message.reply_photo(buf_sales_chart, caption="Total Sales Quantity for Each Product")
                 
 
                 # Generate the line chart visualization for product sales over time
                 buf_line_chart = generate_sales_time_series_chart(sales_data)
                 # Send the line chart visualization to the user with a caption
-                await update.message.reply_photo(buf_line_chart, caption="Product Sales Over Time")
+                # await update.message.reply_photo(buf_line_chart, caption="Product Sales Over Time")
 
                     # Generate the top ten products bar chart visualization
                 buf_top_ten_products_bar_chart = generate_top_ten_products_bar_chart(sales_data)
                 # Send the top ten products bar chart visualization to the user with a caption
-                await update.message.reply_photo(buf_top_ten_products_bar_chart, caption="Bar Chart: Top Ten Products by Sales Quantity")
+                # await update.message.reply_photo(buf_top_ten_products_bar_chart, caption="Bar Chart: Top Ten Products by Sales Quantity")
+                
+                # Send Grouped charts as an album with a singl caption
+                images = [InputMediaPhoto(media=buf_line_chart), InputMediaPhoto(media=buf_top_ten_products_bar_chart)]
+                caption = "Sales Reports (Total Sales Quantity for Each Product, Product Sales Over Time, Top Ten Products by Sales Quantity)"
+                
+                await update.message.reply_media_group(media=images, caption=caption)
+                
             
             else:
                 await update.message.reply_text("No sales transaction data available.")            
@@ -1130,24 +1240,34 @@ async def reports(update: Update, context: CallbackContext) -> None:
 
             # Process and visualize the stock data
             if stock_data:
-                # Generate the bar chart visualization for stock products
-                buf_bar = generate_stock_bar_chart(API_ENDPOINT)
-                # Send the bar chart visualization to the user with a caption
-                await update.message.reply_photo(buf_bar, caption="Stock Transactions by Product")
+                # Generate the bar chart visualizations for stock products
+                charts = generate_stock_bar_charts(API_ENDPOINT)
+                print(charts)
+                if charts:
+                    # Open each bar chart image and append it to a list
+                    images = [InputMediaPhoto(media=chart) for chart in charts]
+                    images.append(InputMediaPhoto(media=buf_bar))
+                    # Send the images as an album with a single caption
+                    caption = "Total Stock Transactions by Product (Stock In, Stock Out, Stock On Hand)"
+                    await update.message.reply_media_group(media=images, caption=caption)
+                else:
+                    await update.message.reply_text("No stock data available.")
             else:
                 await update.message.reply_text("No stock data available.")
-                
-                
-                
-            # Display information about the best selling product
-            best_selling_product = report_data['best_selling_product']
-            # Display information about the least selling product
-            least_selling_product = report_data['least_selling_product']
-            least_selling_product_code, least_selling_product_quantity = least_selling_product.popitem()
+             
+            # Display the report data to the user
+            best_selling_product = report_data.get('best_selling_product', {})
+            least_selling_product = report_data.get('least_selling_product', {})
             
-            report_txt = f"Best Selling Product: {best_selling_product['product__code']} - Total Sold: {best_selling_product['total_sold']}\n\nLeast Selling Product: {least_selling_product_code} - Total Sold: {least_selling_product_quantity}"
+            report_txt = f"*Total Stock In :* _{report_data['total_stock_in']}_ 🟢\n" \
+                        f"*Total Stock Out :* _{report_data['total_stock_out']}_ 🔺\n" \
+                        f"*Total Stock On Hand :* _{report_data['total_stock_on_hand']}_ 🏪\n" \
+                        f"*Total Stock Value :* _{report_data['total_stock_value']}_\n" \
+                        f"*Best Selling Product :* {best_selling_product.get('products', 'N/A')} \n_Total Sold:_ (*{best_selling_product.get('quantity_sold', 'N/A')}*)\n" \
+                        f"*Least Selling Product :* {least_selling_product.get('products', 'N/A')} \n_Total Sold:_ (*{least_selling_product.get('quantity_sold', 'N/A')}*)"     
+            
             await update.message.reply_text(
-                report_txt
+                report_txt, parse_mode=ParseMode.MARKDOWN
             )
 
         else:
@@ -1157,6 +1277,22 @@ async def reports(update: Update, context: CallbackContext) -> None:
         logger.error(f"Error fetching or displaying reports: {e}")
         await update.message.reply_text("An error occurred while fetching or displaying reports. Please try again later.")
 
+async def help_command(update: Update, context: CallbackContext) -> None:
+    """Send a message when the command /help is issued."""
+    help_text = (
+        "Welcome to the Stock Management Bot!\n\n"
+        "This bot helps you manage your inventory by allowing you to add products, record sales, manage stock, and view reports.\n\n"
+        "You can interact with this bot by using the following commands:\n"
+        "/start - Start the bot\n"
+        "/products - View all products\n"
+        "/add - Add a new product\n"
+        "/sale - Record a sale\n"
+        "/stock - Manage stock\n"
+        "/reports - View reports\n"
+        "/help - Get help on how to use the bot\n"
+        "/cancel - Cancel the current operation"
+    )
+    await update.message.reply_text(help_text)
 
 
 def main():
@@ -1219,9 +1355,14 @@ def main():
     # application.add_handler(CommandHandler("stock_report", stock_report))
     application.add_handler(stock_handler)
     
+    application.add_handler(CommandHandler("products", start_slider))
+    application.add_handler(CallbackQueryHandler(navigate_slider, pattern='^(prev|next)$'))
+    
     application.add_handler(CommandHandler("reports", reports))
     # Add the /start command handler to the application
     application.add_handler(CommandHandler("start", start))
+    # Add the /help command handler to the application
+    application.add_handler(CommandHandler("help", help_command))
     
     # Start the application
     application.run_polling()
