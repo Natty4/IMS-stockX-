@@ -55,14 +55,14 @@ async def start(update: Update, context: CallbackContext) -> None:
     
     user_store = requests.get(f"{API_ENDPOINT}/stores/")
     # Store the user's details in the context and database
-    user_info = {
+    user = {
         "tg_id": user_id,
         "first_name": first_name,
         "last_name": last_name,
         "username": username,
         "store": user_store.json()[0]["id"] if user_store.status_code == 200 else "N/A"
     }
-    context.user_data['user_info'] = user_info
+    context.user_data['user'] = user
     
     # Check if the user already exists in the database
     
@@ -366,7 +366,7 @@ async def add_product_color(update: Update, context: CallbackContext) -> int:
                 'cost_price': user_data['cost_price'],
                 'selling_price': user_data['selling_price'],
                 'image_url': user_data.get('image_url', ''),
-                'store': user_data['user_info']['store'],  # 'store' is the ID of the store associated with the user
+                'store': user_data['user']['store'],  # 'store' is the ID of the store associated with the user
                 'created_by': update.callback_query.message.chat.username
             }
             response = requests.post(f"{API_ENDPOINT}/products/create/", json=product_data)
@@ -620,7 +620,7 @@ async def finalize_sale(update: Update, context: CallbackContext) -> int:
         sale_data['quantity_sold'] = quantity
         sale_data['sold_by'] = update.callback_query.message.chat.username
         sale_data['product'] = product_id
-        sale_data['store'] = context.user_data['user_info']['store']
+        sale_data['store'] = context.user_data['user']['store']
         response = requests.post(f"{API_ENDPOINT}/sales/create/", json=sale_data)
         if response.status_code == 201:
             await update.callback_query.message.reply_text(f"✅ Sale recorded for {product_id}.")
@@ -656,10 +656,10 @@ async def cancel_sale(update: Update, context: CallbackContext) -> int:
 async def start_stock_update(update: Update, context: CallbackContext) -> int:
     """Start the stock update conversation and prompt user to choose a product."""
     try:
-        udata = context.user_data['user_info']
+        user = context.user_data['user']
         # Fetch products along with their current stock on hand quantities from the API
-        stocks = requests.get(f"{API_ENDPOINT}/stocks/", data=udata).json()
-        print(stocks, '--------------------------------->>')
+        stocks = requests.get(f"{API_ENDPOINT}/stocks/", data=user).json()
+        
         # Extract product information from each stock entry
         products = [
             {
@@ -684,7 +684,7 @@ async def start_stock_update(update: Update, context: CallbackContext) -> int:
         # Create the reply markup
         reply_markup = InlineKeyboardMarkup(product_buttons)
         # Send message with the product list and inline buttons
-        await update.message.reply_text("✅ Select a product to update stock quantity:", reply_markup=reply_markup)
+        await update.message.reply_text("Select a product to update stock quantity:", reply_markup=reply_markup)
         return STOCK_PRODUCT_SELECTION
     except Exception as e:
         logger.error(f"Error in starting stock update conversation: {e}")
@@ -698,7 +698,7 @@ async def select_stock_product(update: Update, context: CallbackContext) -> int:
     """Store the selected product and prompt user to enter quantity."""
     query = update.callback_query
     product_id = query.data
-    udata = context.user_data['user_info']
+    udata = context.user_data['user']
     if product_id == "add_new_stock":
         # Add new stock option selected, prompt user to select a product from the list of all products
         try:
@@ -739,7 +739,7 @@ async def update_stock_quantity(update: Update, context: CallbackContext) -> int
     """Process the quantity input and update the stock."""
     quantity = update.message.text
     selected_product = context.user_data.get('selected_product')
-    udata = context.user_data['user_info']
+    udata = context.user_data['user']
     if not selected_product:
         await update.message.reply_text("No product selected. Please start again.")
         context.user_data.pop('selected_product', None)
@@ -807,7 +807,7 @@ async def add_new_stock_quantity(update: Update, context: CallbackContext) -> in
             "low_stock_threshold": selected_product['low_stock_threshold'],  # You may adjust this if needed
             "created_by": update.message.from_user.username,
             "product": selected_product['id'],
-            "store": context.user_data['user_info']['store']
+            "store": context.user_data['user']['store']
         }
         # Add new stock using the API
         response = requests.post(f"{API_ENDPOINT}/stocks/create/", json=stock_data)

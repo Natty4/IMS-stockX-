@@ -228,6 +228,7 @@ class SalesTransactionCreateAPIView(generics.CreateAPIView):
         if not user_store:
             return Response({'error': 'Store not found for the provided user ID'}, status=status.HTTP_404_NOT_FOUND)
         store = user_store
+
         try:
             self.handle_errors(product, quantity_sold)
             
