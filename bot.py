@@ -1232,17 +1232,15 @@ async def reports(update: Update, context: CallbackContext) -> None:
 async def help_command(update: Update, context: CallbackContext) -> None:
     """Send a message when the command /help is issued."""
     help_text = (
-        "Welcome to the Stock Management Bot!\n\n"
-        "This bot helps you manage your inventory by allowing you to add products, record sales, manage stock, and view reports.\n\n"
-        "You can interact with this bot by using the following commands:\n"
+        f"Hello 👋 {update.message.from_user.username} You can interact with this bot by sending the following commands:\n\n"
         "/start - Start the bot\n"
-        "/products - View all products\n"
-        "/add - Add a new product\n"
-        "/sale - Record a sale\n"
-        "/stock - Manage stock\n"
-        "/reports - View reports\n"
         "/help - Get help on how to use the bot\n"
-        "/cancel - Cancel the current operation"
+        "/products - View all products\n"
+        "Add a Product (Button)- Add a new product to the inventory\n"
+        "Record a Sale (Button) - Record a sale transaction\n"
+        "Manage Stock (Button) - Update stock quantities\n"
+        "Generate Reports (Button) - Generate sales and stock reports\n"
+        
     )
     await update.message.reply_text(help_text)
 
@@ -1271,7 +1269,6 @@ def main():
     )
     
     # Create a conversation handler for sale
-    # Create a conversation handler for sale
     sale_handler = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex(r"^Record a Sale$") & ~filters.COMMAND, start_sale)],
     states={
@@ -1283,10 +1280,6 @@ def main():
     fallbacks=[CommandHandler("cancel", cancel_sale)],
 )
 
-    # regex for filtering a text "Record a Sale"
-
-    
-    
     # Create a conversation handler for managing stock    
     stock_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex(r"^Manage Stock$") & ~filters.COMMAND, start_stock_update)],
@@ -1313,6 +1306,7 @@ def main():
     application.add_handler(CallbackQueryHandler(navigate_slider, pattern='^(prev|next)$'))
     
     application.add_handler(CommandHandler("reports", reports))
+    application.add_handler(MessageHandler(filters.Regex(r"^Generate Reports$") & ~filters.COMMAND, reports))
     # Add the /start command handler to the application
     application.add_handler(CommandHandler("start", start))
     # Add the /help command handler to the application
