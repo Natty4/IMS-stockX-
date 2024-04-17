@@ -1,131 +1,97 @@
 from rest_framework import serializers
-from .models import Product, Stock, SalesTransaction, StockTransaction, Color, Category, SizeRange, Brand
+from .models import Store, Product, Stock, SalesTransaction, StockTransaction, Color, Category, SizeRange, Brand
+
+class StoreSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Store
+        exclude = ['created_at', 'updated_at']
 
 class BrandSerializer(serializers.ModelSerializer):
     class Meta:
         model = Brand
-        exclude = ['created_at', 'updated_at']
-        
+        fields = ['id', 'name']
+
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
-        exclude = ['created_at', 'updated_at']
-        
+        fields = ['id', 'name']
+
 class SizeRangeSerializer(serializers.ModelSerializer):
     class Meta:
         model = SizeRange
-        exclude = ['created_at', 'updated_at']
-        
+        fields = ['id', 'name', 'size_value']
+
 class ColorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Color
-        exclude = ['created_at', 'updated_at']
-        
+        fields = ['id', 'name', 'color_code']
+
 class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         exclude = ['created_at', 'updated_at', 'is_active']
+
 class ProductListSerializer(serializers.ModelSerializer):
     category = CategorySerializer()
     brand = BrandSerializer()
     colors = ColorSerializer(many=True)
+
     class Meta:
         model = Product
-        fields = '__all__'   
+        exclude = ['created_at', 'updated_at', 'is_active']
+
+class ProductDetailSerializer(serializers.ModelSerializer):
+    category = CategorySerializer()
+    brand = BrandSerializer()
+    size_range = SizeRangeSerializer()
+    colors = ColorSerializer(many=True)
+
+    class Meta:
+        model = Product
+        fields = '__all__'
+        
 class StockSerializer(serializers.ModelSerializer):
     class Meta:
         model = Stock
         fields = '__all__'
-        
+
 class SalesTransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesTransaction
         fields = '__all__'
-    
+
 class StockTransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = StockTransaction
         fields = '__all__'
-        
+
 class SalesTransactionListSerializer(serializers.ModelSerializer):
     product = ProductListSerializer()
 
     class Meta:
         model = SalesTransaction
         fields = '__all__'
-        
-class LowStockProductSerializer(serializers.ModelSerializer):
-    product = ProductSerializer()
-    
-    class Meta:
-        model = Stock
-        fields = '__all__'
-        
+
 class StockTransactionListSerializer(serializers.ModelSerializer):
     product = ProductListSerializer()
+
     class Meta:
         model = StockTransaction
         fields = '__all__'
-        
-class ProductDetailSerializer(serializers.ModelSerializer):
-    category = CategorySerializer()
-    brand = BrandSerializer()
-    size_range = SizeRangeSerializer()
-    colors = ColorSerializer(many=True)
-    class Meta:
-        model = Product
-        fields = '__all__'
-        
+
 class StockDetailSerializer(serializers.ModelSerializer):
     product = ProductListSerializer()
-    
+
     class Meta:
         model = Stock
         fields = '__all__'
-        
-class SalesTransactionDetailSerializer(serializers.ModelSerializer):
-    product = ProductSerializer()
-    
-    class Meta:
-        model = SalesTransaction
-        fields = '__all__'
-        
-class StockTransactionDetailSerializer(serializers.ModelSerializer):
-    product = ProductSerializer()
-    
-    class Meta:
-        model = StockTransaction
-        fields = '__all__'
-        
+
 class LowStockProductDetailSerializer(serializers.ModelSerializer):
     product = ProductSerializer()
-    
+
     class Meta:
         model = Stock
         fields = '__all__'
-        
-class ProductCreateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Product
-        fields = '__all__'
-        
-    def create(self, validated_data):
-        colors_data = validated_data.pop('colors')
-        product = Product.objects.create(**validated_data)
-        for color_data in colors_data:
-            color = Color.objects.get(pk=color_data['id'])
-            product.colors.add(color)
-        return product
-    
-    def update(self, instance, validated_data):
-        colors_data = validated_data.pop('colors')
-        instance = super().update(instance, validated_data)
-        instance.colors.clear()
-        for color_data in colors_data:
-            color = Color.objects.get(pk=color_data['id'])
-            instance.colors.add(color)
-        return instance
-    
 
 class ProductReportSerializer(serializers.Serializer):
     total_stock_in = serializers.IntegerField()

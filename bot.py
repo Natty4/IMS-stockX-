@@ -44,21 +44,45 @@ SELECT_REPORT_TYPE = 0
 # Handler for /start command
 async def start(update: Update, context: CallbackContext) -> None:
     """Start the conversation and ask user to choose an action."""
+    
+    # get user's detail from the update object (user_id, first_name, last_name, username, phone_number, language_code, location)
+    user_id = update.effective_user.id
+    first_name = update.effective_user.first_name if update.effective_user.first_name else "N/A"
+    last_name = update.effective_user.last_name if update.effective_user.last_name else "N/A"
+    username = update.effective_user.username if update.effective_user.username else "N/A"
+    
+    
+    
+    user_store = requests.get(f"{API_ENDPOINT}/stores/")
+    # Store the user's details in the context and database
+    user_info = {
+        "tg_id": user_id,
+        "first_name": first_name,
+        "last_name": last_name,
+        "username": username,
+        "store": user_store.json()[0]["id"] if user_store.status_code == 200 else "N/A"
+    }
+    context.user_data['user_info'] = user_info
+    
+    # Check if the user already exists in the database
+    
+    
     await update.message.reply_text(
-        "Hi! I'm your stock management bot. Choose an action:\n"
-        "/add - Add a new product\n"
-        "/sale - Record a sale\n"
-        "/stock - Manage stock\n"
-        "/reports - Generate reports\n"
-        "/cancel - Cancel the current operation\n"
-        "/help - Get help"
+        f"Hello {first_name}! Welcome to the StockX Bot. How can I help you today?",
+        reply_markup=ReplyKeyboardMarkup(
+            [
+                ["Add a Product", "Record a Sale"],
+                ["Manage Stock", "Generate Report"],
+            ],
+            resize_keyboard=True,
+        ),
         
     )
     
 async def start_slider(update: Update, context: CallbackContext):
     # Fetch data from the endpoint
     DEFAULT_IMAGE_URL = "https://simbakids.netlify.app/_nuxt/img/simbakidslogo.104a990.png"
-    response = requests.get(f"{API_ENDPOINT}/stocks-list/")
+    response = requests.get(f"{API_ENDPOINT}/stocks/")
     if response.status_code == 200:
         stocks = response.json()
     else:
@@ -143,11 +167,10 @@ async def navigate_slider(update: Update, context: CallbackContext):
             caption=captions[current_index],
             reply_markup=reply_markup
         )
-        
-        
+              
         
 # Handler for /add command to start adding a new product
-async def add_product(update: Update, context: CallbackContext) -> int:
+async def start_add_product(update: Update, context: CallbackContext) -> int:
     """Ask user to provide product name."""
     await update.message.reply_text(
         "Let's add a new product. Please enter the name of the product:"
@@ -343,7 +366,7 @@ async def add_product_color(update: Update, context: CallbackContext) -> int:
                 'cost_price': user_data['cost_price'],
                 'selling_price': user_data['selling_price'],
                 'image_url': user_data.get('image_url', ''),
-                # 'from': context.bot.username,
+                'store': user_data['user_info']['store'],  # 'store' is the ID of the store associated with the user
                 'created_by': update.callback_query.message.chat.username
             }
             response = requests.post(f"{API_ENDPOINT}/products/create/", json=product_data)
@@ -351,14 +374,13 @@ async def add_product_color(update: Update, context: CallbackContext) -> int:
                 # Product created successfully
                 product_details = "\n".join([f"{key}: {value}" for key, value in product_data.items() if key != 'colors'])
                 colors_list = ", ".join(user_colors)
-                response_text = f"Product added successfully!\n\n{product_details}\n\nColors: {colors_list}\n\nResponse from API: {response.status_code} "
+                response_text = f"✅ Product added successfully!\n\n{product_details}\n\nColors: {colors_list}\n\nResponse from API: {response.status_code} "
                 await update.callback_query.message.edit_text(response_text)
                 return ConversationHandler.END
             else:
-                # Failed to create product
-                await update.callback_query.message.reply_text(f"Failed to add product. Error: {response.status_code} {response.json()}")
-                # Remove the inline keyboard and accompanying text after displaying the response
-                await update.callback_query.message.edit_text("Faild! ❌")
+                # Failed to create Remove the inline keyboard and accompanying text after displaying the response
+                await update.callback_query.message.edit_text(f"❌ Faild!  to add product. Error: {response.status_code} {response.json()}")
+                
                 return ConversationHandler.END
         except Exception as e:
             logger.error(f"Error while creating product: {e}")
@@ -395,6 +417,18 @@ async def add_product_color(update: Update, context: CallbackContext) -> int:
 # Function to handle adding a product conversation cancellation
 async def cancel_add_product(update: Update, context: CallbackContext) -> int:
     """Cancel adding product."""
+    context.user_data.pop('name', None)
+    context.user_data.pop('code', None)
+    context.user_data.pop('description', None)
+    context.user_data.pop('cost_price', None)
+    context.user_data.pop('selling_price', None)
+    context.user_data.pop('quantity', None)
+    context.user_data.pop('image_url', None)
+    context.user_data.pop('category', None)
+    context.user_data.pop('brand', None)
+    context.user_data.pop('size', None)
+    context.user_data.pop('colors', None)
+    
     await update.message.reply_text("Adding product cancelled.")
     return ConversationHandler.END
 
@@ -430,7 +464,8 @@ async def select_sale_category(update: Update, context: CallbackContext) -> int:
     try:
         # Fetch products belonging to the selected category from the API
         # response = requests.get(f"{API_ENDPOINT}/categories/{category_id}/products/")
-        response = requests.get(f"{API_ENDPOINT}/stocks-list/")
+        response = requests.get(f"{API_ENDPOINT}/stocks/")
+
         response.raise_for_status()  # Raise an error for non-2xx status codes
         products = []
         
@@ -585,13 +620,14 @@ async def finalize_sale(update: Update, context: CallbackContext) -> int:
         sale_data['quantity_sold'] = quantity
         sale_data['sold_by'] = update.callback_query.message.chat.username
         sale_data['product'] = product_id
-        response = requests.post(f"{API_ENDPOINT}/sales/", json=sale_data)
+        sale_data['store'] = context.user_data['user_info']['store']
+        response = requests.post(f"{API_ENDPOINT}/sales/create/", json=sale_data)
         if response.status_code == 201:
             await update.callback_query.message.reply_text(f"✅ Sale recorded for {product_id}.")
         else:
             await update.callback_query.message.reply_text(f"❌ Failed to record sale for {product_id}. Error: {response.status_code} {response.json()}")
     # Example: Send a POST request with the sale data
-    # response = requests.post(f"{API_ENDPOINT}/sales/", json=sale_data)
+    # response = requests.post(f"{API_ENDPOINT}/sales/create/", json=sale_data)
     # Handle the response accordingly
     
     # Remove the inline keyboard and replace the message with a success message and end the conversation
@@ -616,27 +652,14 @@ async def cancel_sale(update: Update, context: CallbackContext) -> int:
 
 
 
-# # Handler for /stock command to manage stock
-# async def stock(update: Update, context: CallbackContext) -> int:
-#     """Ask user to provide item code and quantity to manage stock."""
-#     await update.message.reply_text("Enter the product code:")
-#     return STOCK_ITEM
-
-# # Function to handle capturing item code and quantity for managing stock
-# async def stock_process(update: Update, context: CallbackContext) -> None:
-#     """Manage stock for the provided item."""
-#     product_code = update.message.text
-#     # Send API request to manage stock using product_code and quantity
-#     await update.message.reply_text(f"Stock managed for {product_code}.")
-#     return ConversationHandler.END
-
-
 # Function to start the stock update conversation
 async def start_stock_update(update: Update, context: CallbackContext) -> int:
     """Start the stock update conversation and prompt user to choose a product."""
     try:
+        udata = context.user_data['user_info']
         # Fetch products along with their current stock on hand quantities from the API
-        stocks = requests.get(f"{API_ENDPOINT}/stocks-list/").json()
+        stocks = requests.get(f"{API_ENDPOINT}/stocks/", data=udata).json()
+        print(stocks, '--------------------------------->>')
         # Extract product information from each stock entry
         products = [
             {
@@ -661,7 +684,7 @@ async def start_stock_update(update: Update, context: CallbackContext) -> int:
         # Create the reply markup
         reply_markup = InlineKeyboardMarkup(product_buttons)
         # Send message with the product list and inline buttons
-        await update.message.reply_text("Select a product to update stock quantity:", reply_markup=reply_markup)
+        await update.message.reply_text("✅ Select a product to update stock quantity:", reply_markup=reply_markup)
         return STOCK_PRODUCT_SELECTION
     except Exception as e:
         logger.error(f"Error in starting stock update conversation: {e}")
@@ -675,11 +698,12 @@ async def select_stock_product(update: Update, context: CallbackContext) -> int:
     """Store the selected product and prompt user to enter quantity."""
     query = update.callback_query
     product_id = query.data
+    udata = context.user_data['user_info']
     if product_id == "add_new_stock":
         # Add new stock option selected, prompt user to select a product from the list of all products
         try:
             # Fetch all products from the API
-            products = requests.get(f"{API_ENDPOINT}/products/").json()
+            products = requests.get(f"{API_ENDPOINT}/products/", data=udata).json()
             product_buttons = [
                 [InlineKeyboardButton(f"{product['name']}-{product['code']}", callback_data=str(product['id']))]
                 for product in products
@@ -715,7 +739,7 @@ async def update_stock_quantity(update: Update, context: CallbackContext) -> int
     """Process the quantity input and update the stock."""
     quantity = update.message.text
     selected_product = context.user_data.get('selected_product')
-    
+    udata = context.user_data['user_info']
     if not selected_product:
         await update.message.reply_text("No product selected. Please start again.")
         context.user_data.pop('selected_product', None)
@@ -726,16 +750,17 @@ async def update_stock_quantity(update: Update, context: CallbackContext) -> int
         stock_update_data = {
             "stock_on_hand": int(quantity),
             "product": selected_product['id'],
-            "created_by": update.message.from_user.username
+            "created_by": update.message.from_user.username,
+            "user": udata
         }
         # Update stock using the API
         response = requests.put(f"{API_ENDPOINT}/stocks/update/", json=stock_update_data)
         
         if response.status_code == 200:
             updated_stock = response.json()
-            await update.message.reply_text(f"Stock updated successfully. \nTotal on hand quantity for {selected_product['name']} - {selected_product['code']}: {updated_stock['stock_on_hand']}")
+            await update.message.reply_text(f"✅ Stock updated successfully. \nTotal on hand quantity for {selected_product['name']} - {selected_product['code']}: {updated_stock['stock_on_hand']}")
         else:
-            await update.message.reply_text(f"Failed to update stock. Error: {response.status_code} {response.json()}")
+            await update.message.reply_text(f"❌ Failed to update stock. Error: {response.status_code} {response.json()}")
         
     except Exception as e:
         logger.error(f"Error updating stock for product {selected_product['id']}: {e}")
@@ -781,10 +806,11 @@ async def add_new_stock_quantity(update: Update, context: CallbackContext) -> in
             "stock_on_hand": int(quantity),
             "low_stock_threshold": selected_product['low_stock_threshold'],  # You may adjust this if needed
             "created_by": update.message.from_user.username,
-            "product": selected_product['id']
+            "product": selected_product['id'],
+            "store": context.user_data['user_info']['store']
         }
         # Add new stock using the API
-        response = requests.post(f"{API_ENDPOINT}/stocks/", json=stock_data)
+        response = requests.post(f"{API_ENDPOINT}/stocks/create/", json=stock_data)
         
         if response.status_code == 201:
             new_stock = response.json()
@@ -883,42 +909,7 @@ def generate_top_ten_products_bar_chart(sales_data):
 
     return buf_bar_chart
 
-    
-# # Function to generate and return the bar chart visualization for all available products in the stock
-# def generate_stock_bar_chart(stock_data):
-#     # Extract product codes and available quantities
-#     product_codes = [stock['product']['code'] for stock in stock_data]
-#     quantities_available = [stock['stock_on_hand'] for stock in stock_data]
-    
-#     # Fetch all unique product codes
-#     all_product_codes = set(product_codes)
-    
-#     # Create a dictionary to store available quantities for each product code
-#     quantities_dict = {code: 0 for code in all_product_codes}
-    
-#     # Update the quantities based on available data
-#     for code, quantity in zip(product_codes, quantities_available):
-#         quantities_dict[code] = quantity
-    
-#     # Sort the product codes alphabetically
-#     sorted_product_codes = sorted(all_product_codes)
-
-#     # Create bar chart
-#     fig, ax = plt.subplots(figsize=(12, 6))  # Adjust the figsize as needed
-#     ax.bar(sorted_product_codes, [quantities_dict[code] for code in sorted_product_codes])
-#     ax.set_xlabel('Product Code')
-#     ax.set_ylabel('Available Quantity')
-#     ax.set_title('Available Quantity for Stock Products')
-#     ax.grid(True)
-#     plt.xticks(rotation=45)
-
-#     # Save the bar chart visualization as bytes in memory
-#     buf_bar_chart = io.BytesIO()
-#     plt.savefig(buf_bar_chart, format='png')
-#     plt.close()  # Close the figure to free memory
-#     buf_bar_chart.seek(0)
-
-#     return buf_bar_chart   
+      
        
 def generate_stock_bar_charts(API_ENDPOINT):
     # Fetch data from the /stock-transactions/ endpoint
@@ -926,7 +917,7 @@ def generate_stock_bar_charts(API_ENDPOINT):
     stock_transactions = stock_transactions_response.json()
 
     # Fetch data from the /stocks-list/ endpoint
-    stocks_list_response = requests.get(f"{API_ENDPOINT}/stocks-list/")
+    stocks_list_response = requests.get(f"{API_ENDPOINT}/stocks/")
     stocks_list = stocks_list_response.json()
 
     # Group stock transactions by product
@@ -1012,45 +1003,6 @@ def generate_stock_bar_charts(API_ENDPOINT):
     return charts
 
 
-# def generate_sales_bar_chart(sales_data):
-#     # Aggregate sales data for each product
-#     product_sales = {}
-#     for transaction in sales_data:
-#         product_code = transaction['product']['code']  # Extract product code
-#         quantity_sold = transaction['quantity_sold']
-#         if product_code not in product_sales:
-#             product_sales[product_code] = 0
-#         product_sales[product_code] += quantity_sold
-
-#     # Extract product codes and quantities for plotting
-#     product_codes = list(product_sales.keys())
-#     quantities_sold = list(product_sales.values())
-
-#     # Create bar chart
-#     fig, ax = plt.subplots()
-#     bars = ax.bar(product_codes, quantities_sold)
-
-#     # Annotate each bar with its quantity
-#     for bar, quantity in zip(bars, quantities_sold):
-#         height = bar.get_height()
-#         ax.annotate(f'{quantity}',
-#                     xy=(bar.get_x() + bar.get_width() / 2, height),
-#                     xytext=(0, 3),  # 3 points vertical offset
-#                     textcoords="offset points",
-#                     ha='center', va='bottom')
-
-#     ax.set_xlabel('Product Code')
-#     ax.set_ylabel('Total Quantity Sold')
-#     ax.set_title('Total Sales Quantity for Each Product')
-#     ax.grid(True)
-
-#     # Save the bar chart visualization as bytes in memory
-#     buf = io.BytesIO()
-#     plt.savefig(buf, format='png')
-#     plt.close()  # Close the figure to free memory
-#     buf.seek(0)
-
-#     return buf
 
 def generate_sales_time_series_chart(sales_data, start_date=None, end_date=None, product_codes=None):
     # If no filters are provided, use the entire sales dataset
@@ -1232,7 +1184,7 @@ async def reports(update: Update, context: CallbackContext) -> None:
                 
 
             # Fetch stock data from the API endpoint
-            stock_response = requests.get(f"{API_ENDPOINT}/stocks-list/")
+            stock_response = requests.get(f"{API_ENDPOINT}/stocks/")
             stock_response.raise_for_status()  # Raise an error for non-2xx status codes
             
             # Parse the JSON response for stock data
@@ -1299,10 +1251,9 @@ def main():
     """Start the bot."""
     # Create the application and pass the bot token to it
     application = Application.builder().token(BOT_TOKEN).build()
-    
     # Create a conversation handler for adding a product
     add_product_handler = ConversationHandler(
-        entry_points=[CommandHandler("add", add_product)],
+        entry_points=[MessageHandler(filters.Regex(r"^Add a Product$") & ~filters.COMMAND, start_add_product)],
         states={
             ADD_PRODUCT_NAME: [MessageHandler(filters.TEXT, add_product_name)],
             ADD_PRODUCT_CODE: [MessageHandler(filters.TEXT, add_product_code)],
@@ -1322,7 +1273,7 @@ def main():
     # Create a conversation handler for sale
     # Create a conversation handler for sale
     sale_handler = ConversationHandler(
-    entry_points=[CommandHandler("sale", start_sale)],
+    entry_points=[MessageHandler(filters.Regex(r"^Record a Sale$") & ~filters.COMMAND, start_sale)],
     states={
         SALE_CATEGORY: [CallbackQueryHandler(select_sale_category)],
         SALE_PRODUCT_SELECTION: [CallbackQueryHandler(select_sale_product)],
@@ -1332,10 +1283,13 @@ def main():
     fallbacks=[CommandHandler("cancel", cancel_sale)],
 )
 
+    # regex for filtering a text "Record a Sale"
+
+    
     
     # Create a conversation handler for managing stock    
     stock_handler = ConversationHandler(
-        entry_points=[CommandHandler('stock', start_stock_update)],
+        entry_points=[MessageHandler(filters.Regex(r"^Manage Stock$") & ~filters.COMMAND, start_stock_update)],
         states={
             STOCK_PRODUCT_SELECTION: [CallbackQueryHandler(select_stock_product)],
             STOCK_QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, update_stock_quantity)],
