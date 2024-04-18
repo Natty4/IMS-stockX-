@@ -2,6 +2,11 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path('stockxuser/create/', views.StockXUserCreateAPIView.as_view(), name='stockxuser-create'),
+    path('stockxusers/<str:tg_id>/', views.StockXUserListAPIView.as_view(), name='stockxusers-list'),
+    path('storeuser/create/', views.StoreUserCreateAPIView.as_view(), name='storeuser-create'),
+    path('storeuser/verify/', views.StoreUserVerificationView.as_view(), name='storeuser-verify'),
+    
     path('stores/', views.UserStoreAPIView.as_view(), name='stores'),
     path('stores/create/', views.StoreCreateAPIView.as_view(), name='stores-create'),
     

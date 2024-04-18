@@ -1,6 +1,15 @@
 from rest_framework import serializers
-from .models import Store, Product, Stock, SalesTransaction, StockTransaction, Color, Category, SizeRange, Brand
+from .models import StockXUser, StoreUser, Store, Product, Stock, SalesTransaction, StockTransaction, Color, Category, SizeRange, Brand
 
+class StockXUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StockXUser
+        exclude = ['created_at', 'updated_at', 'is_active']
+        
+class StoreUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StoreUser
+        exclude = ['verified', 'verification_code', 'created_at', 'updated_at']
 class StoreSerializer(serializers.ModelSerializer):
     class Meta:
         model = Store

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import StockXUser, Brand, Category, SizeRange, Color, Store, Product, Stock, StockTransaction, SalesTransaction
+from .models import StockXUser, StoreUser, Brand, Category, SizeRange, Color, Store, Product, Stock, StockTransaction, SalesTransaction
 
 
 @admin.register(StockXUser)
@@ -8,6 +8,13 @@ class StockXUserAdmin(admin.ModelAdmin):
     search_fields = ['first_name', 'last_name', 'tg_id', 'email']
     list_per_page = 15
     ordering = ['first_name']
+    
+@admin.register(StoreUser)
+class StoreUserAdmin(admin.ModelAdmin):
+    list_display = ['user', 'store', 'role', 'verified']
+    search_fields = ['user__first_name', 'user__last_name', 'store__name', 'role']
+    list_per_page = 15
+    ordering = ['-created_at']
 @admin.register(Brand)
 class BrandAdmin(admin.ModelAdmin):
     list_display = ['name']

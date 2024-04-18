@@ -1,19 +1,68 @@
 from rest_framework import generics, status
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.db.models import Sum
 from django.db.models import F
 from django.core.exceptions import ValidationError
 from .models import StockXUser
-from .models import Brand, Category, SizeRange, Color, Store, Product, Stock, SalesTransaction, StockTransaction
+from .models import StockXUser,StoreUser, Brand, Category, SizeRange, Color, Store, Product, Stock, SalesTransaction, StockTransaction
 from .serializers import *
 
 
-# get user store endpoint
+class StockXUserCreateAPIView(generics.CreateAPIView):
+    serializer_class = StockXUserSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+# get specific user by tg_id get the id from the url
+class StockXUserListAPIView(generics.ListAPIView):
+    serializer_class = StockXUserSerializer
+    queryset = StockXUser.objects.all()
+
+    def get_queryset(self):
+        tg_id = self.kwargs.get('tg_id')
+        return StockXUser.objects.filter(tg_id=tg_id)
+     
+class StoreUserCreateAPIView(generics.CreateAPIView):
+    serializer_class = StoreUserSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Generate verification code
+        store_user = serializer.save(verification_code=StoreUser.generate_verification_code(self))
+
+        # Send verification code to user (via Telegram bot or other means)
+        # Example: send_verification_code(store_user.user, store_user.verification_code)
+
+        return Response(f"User: {store_user.user} Verification code: {store_user.verification_code}", status=status.HTTP_201_CREATED)
+
+class StoreUserVerificationView(APIView):
+    def post(self, request):
+        verification_code = request.data.get('verification_code')
+        store_user_id = request.data.get('store_user_id')
+
+        try:
+            store_user = StoreUser.objects.get(id=store_user_id)
+            if store_user.verification_code == verification_code:
+                store_user.is_verified = True
+                store_user.save()
+                return Response({"message": "Store user verified successfully."}, status=status.HTTP_200_OK)
+            else:
+                return Response({"error": "Invalid verification code."}, status=status.HTTP_400_BAD_REQUEST)
+        except StoreUser.DoesNotExist:
+            return Response({"error": "Store user not found."}, status=status.HTTP_404_NOT_FOUND)
+ 
 class UserStoreAPIView(generics.ListAPIView):
     serializer_class = StoreSerializer
 
     def get_queryset(self):
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         # Filter store based on the Telegram user ID provided in the request
         return Store.objects.filter(owner__tg_id=user['tg_id'])
@@ -26,7 +75,7 @@ class StoreCreateAPIView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
         store = serializer.save()
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = request.data.get('user', default_user)
         # Associate store with the Telegram user ID provided in the request
         store.owner = StockXUser.objects.filter(tg_id=user['tg_id']).first()
@@ -59,7 +108,7 @@ class ProductCreateAPIView(generics.CreateAPIView):
         initial_quantity = validated_data.get('initial_quantity', 0)
         low_stock_threshold = validated_data.get('low_stock_threshold', 1)
         product = serializer.save()
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = request.data.get('user', default_user)
         # Filter products based on the Telegram user ID provided in the request
         store = Store.objects.filter(owner__tg_id=user['tg_id']).first()
@@ -75,7 +124,7 @@ class ProductListAPIView(generics.ListAPIView):
     serializer_class = ProductListSerializer
 
     def get_queryset(self):
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         # Filter products based on the Telegram user ID provided in the request
         return Product.objects.filter(store__owner__tg_id=user['tg_id'])
@@ -84,7 +133,7 @@ class ProductDetailAPIView(generics.RetrieveAPIView):
     serializer_class = ProductDetailSerializer
 
     def get_queryset(self):
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         # Filter products based on the Telegram user ID provided in the request
         return Product.objects.filter(store__owner__tg_id=user['tg_id'])
@@ -92,7 +141,7 @@ class ProductByCategoryListAPIView(generics.ListAPIView):
     serializer_class = ProductListSerializer
 
     def get_queryset(self):
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         # Filter products by category based on the category ID provided in the URL
         category_id = self.kwargs['category']
@@ -102,7 +151,7 @@ class ProductByBrandListAPIView(generics.ListAPIView):
     serializer_class = ProductSerializer
 
     def get_queryset(self):
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         # Filter products by brand based on the brand ID provided in the URL
         brand_id = self.kwargs['brand']
@@ -117,11 +166,15 @@ class StockCreateAPIView(generics.CreateAPIView):
         product = validated_data['product']
         quantity = validated_data['stock_on_hand']
         
-        # Filter stock based on the Telegram user ID provided in the request
-        stock_owner = Stock.objects.filter(product=product).first()
-        if not stock_owner or stock_owner.created_by != request.data.get('tg_id'):
-            return Response({'error': 'Stock not found or user does not have permission'}, status=status.HTTP_404_NOT_FOUND)
-
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
+        user = request.data.get('user', default_user)
+        user_store = Store.objects.filter(owner__tg_id=user['tg_id']).first()
+        
+        if not user_store:
+            return Response({'error': 'Store not found for the provided user ID'}, status=status.HTTP_404_NOT_FOUND)
+        if not Product.objects.filter(store=user_store, id=product.id).exists():
+            return Response({'error': 'Product not found in the user store'}, status=status.HTTP_404_NOT_FOUND)
+        
         # Try to retrieve existing stock instance
         try:
             stock = Stock.objects.get(product=product)
@@ -131,7 +184,8 @@ class StockCreateAPIView(generics.CreateAPIView):
             stock = Stock.objects.create(
                 product=product,
                 stock_on_hand=quantity,
-                created_by=request.data.get('tg_id')
+                created_by=user['tg_id'],
+                store=user_store
             )
 
         # Create stock transaction
@@ -139,7 +193,8 @@ class StockCreateAPIView(generics.CreateAPIView):
             product=product,
             quantity=quantity,
             stock_type='1',
-            modified_by=request.data.get('tg_id')
+            modified_by=user['tg_id'],
+            store=user_store
         )
 
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -150,9 +205,8 @@ class StockUpdateAPIView(generics.UpdateAPIView):
     def update(self, request, *args, **kwargs):
         # Extract the product identifier from the request data
         product_id = request.data.get('product')
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = request.data.get('user', default_user)
-        
         user_store = Store.objects.filter(owner__tg_id=user['tg_id']).first()
         if not user_store:
             return Response({'error': 'Store not found for the provided user ID'}, status=status.HTTP_404_NOT_FOUND)
@@ -188,7 +242,7 @@ class StockTransactionListAPIView(generics.ListAPIView):
     serializer_class = StockTransactionListSerializer
 
     def get_queryset(self):
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         # Filter stock transactions based on the Telegram user ID provided in the request
         return StockTransaction.objects.filter(product__store__owner__tg_id=user['tg_id'])
@@ -197,7 +251,7 @@ class StockListAPIView(generics.ListAPIView):
     serializer_class = StockDetailSerializer
 
     def get_queryset(self):
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         # Filter stock based on the Telegram user ID provided in the request
         return Stock.objects.filter(product__store__owner__tg_id=user['tg_id'])
@@ -206,7 +260,7 @@ class StockDetailAPIView(generics.RetrieveAPIView):
     serializer_class = StockDetailSerializer
 
     def get_queryset(self):
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         # Filter stock based on the Telegram user ID provided in the request
         return Stock.objects.filter(product__store__owner__tg_id=user['tg_id'])
@@ -221,7 +275,7 @@ class SalesTransactionCreateAPIView(generics.CreateAPIView):
         product = validated_data['product']
         quantity_sold = validated_data['quantity_sold']
 
-        default_user = {'tg_id': '144231904', 'first_name': 'tester', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'tester', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         # Filter sales transactions based on the Telegram user ID provided in the request
         user_store = Store.objects.filter(owner__tg_id=user['tg_id']).first()
@@ -265,7 +319,7 @@ class SalesTransactionListAPIView(generics.ListAPIView):
     serializer_class = SalesTransactionListSerializer
 
     def get_queryset(self):
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         # Filter sales transactions based on the Telegram user ID provided in the request
         return SalesTransaction.objects.filter(product__store__owner__tg_id=user['tg_id'])
@@ -274,7 +328,7 @@ class ProductPerformanceAPIView(generics.ListAPIView):
     serializer_class = ProductReportSerializer
 
     def get_queryset(self):
-        default_user = {'tg_id': '144231904', 'first_name': 'admin', 'last_name': 'admin'}
+        default_user = {'tg_id': '441609134', 'first_name': 'admin', 'last_name': 'admin'}
         user = self.request.data.get('user', default_user)
         user_store = Store.objects.filter(owner__tg_id=user['tg_id']).first()
         try:

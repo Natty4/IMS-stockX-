@@ -39,7 +39,7 @@ API_ENDPOINT = os.getenv('API_ENDPOINT')
 ADD_PRODUCT, ADD_PRODUCT_NAME, ADD_PRODUCT_CODE, ADD_PRODUCT_DESCRIPTION, ADD_PRODUCT_PRICE_1, ADD_PRODUCT_PRICE_2, ADD_PRODUCT_QUANTITY, ADD_PRODUCT_IMAGE, ADD_PRODUCT_CATEGORY, ADD_PRODUCT_BRAND, ADD_PRODUCT_SIZE, ADD_PRODUCT_COLOR = range(12)
 SALE_CATEGORY, SALE_PRODUCT_SELECTION, SALE_QUANTITY, SALE_CONFIRMATION = range(4)
 STOCK_PRODUCT_SELECTION, STOCK_QUANTITY, ADD_NEW_STOCK_PRODUCT_SELECTION, ADD_NEW_STOCK_QUANTITY = range(4)
-SELECT_REPORT_TYPE = 0
+START, CHOOSE_ACTION, CREATE_STORE_NAME, CREATE_STORE_CONFIRM = range(4)
 
 # Handler for /start command
 async def start(update: Update, context: CallbackContext) -> None:
@@ -50,8 +50,6 @@ async def start(update: Update, context: CallbackContext) -> None:
     first_name = update.effective_user.first_name if update.effective_user.first_name else "N/A"
     last_name = update.effective_user.last_name if update.effective_user.last_name else "N/A"
     username = update.effective_user.username if update.effective_user.username else "N/A"
-    
-    
     
     user_store = requests.get(f"{API_ENDPOINT}/stores/")
     # Store the user's details in the context and database
@@ -72,12 +70,89 @@ async def start(update: Update, context: CallbackContext) -> None:
         reply_markup=ReplyKeyboardMarkup(
             [
                 ["Add a Product", "Record a Sale"],
-                ["Manage Stock", "Generate Report"],
+                ["Manage Stock", "Generate Reports"],
             ],
             resize_keyboard=True,
         ),
         
     )
+# Define keyboard buttons
+BUTTON_CREATE_STORE = "Create Store"
+BUTTON_JOIN_STORE = "Join Store"
+async def start(update: Update, context: CallbackContext):
+    """Start the conversation and ask user to choose an action."""
+    tg_id = str(update.effective_user.id)
+    first_name = update.effective_user.first_name
+    last_name = update.effective_user.last_name
+    username = update.effective_user.username
+
+    # Check if the user is new to the bot
+    user_data = await check_user(tg_id)
+    if user_data:
+        # User already exists, continue with regular actions
+        context.user_data['user_id'] = user_data['id']
+        keyboard = [
+            [BUTTON_CREATE_STORE],
+            [BUTTON_JOIN_STORE]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+        await update.message.reply_text("Welcome back! Choose an action:", reply_markup=reply_markup)
+        return CHOOSE_ACTION
+    else:
+        # create stockx user
+        response = requests.post(f"{API_ENDPOINT}/stockxuser/create/", json={"tg_id": tg_id, "first_name": first_name, "last_name": last_name, "username": username})
+    
+        # User is new, prompt to choose between creating or joining a store
+        await update.message.reply_text(
+            f"Welcome, {first_name} {last_name} ({username})!\n"
+            "You are new to this bot. Please choose an action:",
+            reply_markup=ReplyKeyboardMarkup([[BUTTON_CREATE_STORE], [BUTTON_JOIN_STORE]], one_time_keyboard=True)
+        )
+        return START
+
+async def check_user(tg_id):
+    """Check if the user exists in the database."""
+    response = requests.get(f"{API_ENDPOINT}/stockxusers/?tg_id={tg_id}")
+    if response.status_code == 200:
+        return response.json()
+    else:
+        return None
+
+async def create_store(update: Update, context: CallbackContext):
+    """Start the process of creating a store."""
+    await update.message.reply_text("Please enter the name of your store:")
+    return CREATE_STORE_NAME
+
+async def create_store_name(update: Update, context: CallbackContext):
+    """Handle the input of the store name."""
+    store_name = update.message.text
+    context.user_data['store_name'] = store_name
+    await update.message.reply_text(f"Your store name is: {store_name}. Confirm to create the store?",
+                                    reply_markup=ReplyKeyboardMarkup([['Yes', 'No']], one_time_keyboard=True))
+    return CREATE_STORE_CONFIRM
+
+async def create_store_confirm(update: Update, context: CallbackContext):
+    """Handle the confirmation of store creation."""
+    confirm = update.message.text.lower()
+    if confirm == 'yes':
+        # Create the store in the database
+        tg_id = str(update.effective_user.id)
+        user_data = await check_user(tg_id)
+        if user_data:
+            user_id = user_data['id']
+            store_name = context.user_data['store_name']
+            # Call the API to create the store
+            response = requests.post(f"{API_ENDPOINT}/storeuser/create/", json={"role": "", "store": store_name, "user": user_id})
+            if response.status_code == 200:
+                await update.message.reply_text("Store created successfully!")
+            else:
+                await update.message.reply_text("Failed to create store.")
+        else:
+            await update.message.reply_text("User not found.")
+    else:
+        await update.message.reply_text("Store creation cancelled.")
+
+    return ConversationHandler.END
     
 async def start_slider(update: Update, context: CallbackContext):
     # Fetch data from the endpoint
@@ -209,7 +284,7 @@ async def add_product_price_1(update: Update, context: CallbackContext) -> int:
 async def add_product_price_2(update: Update, context: CallbackContext) -> int:
     """Store product price 2 and ask for product product initial quantity."""
     context.user_data['selling_price'] = update.message.text
-    await update.message.reply_text("Enter the product quantity:")
+    await update.message.reply_text("Enter the product initial quantity: (or 0 to skip)")
     return ADD_PRODUCT_QUANTITY
 
 async def add_product_quantity(update: Update, context: CallbackContext) -> int:
@@ -702,11 +777,18 @@ async def select_stock_product(update: Update, context: CallbackContext) -> int:
     if product_id == "add_new_stock":
         # Add new stock option selected, prompt user to select a product from the list of all products
         try:
-            # Fetch all products from the API
+            # Fetch all products from the products enpoint and from stocks endpoint then pick the ones that are not in stocks
             products = requests.get(f"{API_ENDPOINT}/products/", data=udata).json()
+            stocks = requests.get(f"{API_ENDPOINT}/stocks/", data=udata).json()
+            # generate new products dict from the products list and stocks list thar are not in stocks
+            new_products = [product for product in products if product['id'] not in [stock['product']['id'] for stock in stocks]]
+            # if there are no new products, go to the else block instead of ending the conversation
+            if not new_products:
+                await query.message.edit_text("No products found to add new stock.")
+                return ConversationHandler.END
             product_buttons = [
                 [InlineKeyboardButton(f"{product['name']}-{product['code']}", callback_data=str(product['id']))]
-                for product in products
+                for product in new_products
             ]
             # Create the reply markup
             reply_markup = InlineKeyboardMarkup(product_buttons)
@@ -811,12 +893,11 @@ async def add_new_stock_quantity(update: Update, context: CallbackContext) -> in
         }
         # Add new stock using the API
         response = requests.post(f"{API_ENDPOINT}/stocks/create/", json=stock_data)
-        
         if response.status_code == 201:
             new_stock = response.json()
-            await update.message.reply_text(f"New stock added successfully. \nTotal on hand quantity for {selected_product['name']} - {selected_product['code']}: {new_stock['stock_on_hand']}")
+            await update.message.reply_text(f"✅ New stock added successfully. \nTotal on hand quantity for {selected_product['name']} - {selected_product['code']}: {new_stock['stock_on_hand']}")
         else:
-            await update.message.reply_text(f"Failed to add new stock. Error: {response.status_code} {response.json()}")
+            await update.message.reply_text(f"❌ Failed to add new stock. Error: {response.status_code} {response.json()}")
         
     except Exception as e:
         logger.error(f"Error adding new stock for product {selected_product['id']}: {e}")
@@ -1181,7 +1262,6 @@ async def reports(update: Update, context: CallbackContext) -> None:
             
             else:
                 await update.message.reply_text("No sales transaction data available.")            
-                
 
             # Fetch stock data from the API endpoint
             stock_response = requests.get(f"{API_ENDPOINT}/stocks/")
@@ -1194,7 +1274,6 @@ async def reports(update: Update, context: CallbackContext) -> None:
             if stock_data:
                 # Generate the bar chart visualizations for stock products
                 charts = generate_stock_bar_charts(API_ENDPOINT)
-                print(charts)
                 if charts:
                     # Open each bar chart image and append it to a list
                     images = [InputMediaPhoto(media=chart) for chart in charts]
@@ -1244,6 +1323,12 @@ async def help_command(update: Update, context: CallbackContext) -> None:
     )
     await update.message.reply_text(help_text)
 
+async def cancel(update: Update, context: CallbackContext) -> int:
+    """End and cancel the conversation."""
+    await update.message.reply_text(
+        "The conversation has been cancelled. Send /start to start a new conversation."
+    )
+    return ConversationHandler.END
 
 def main():
     """Start the bot."""
@@ -1293,6 +1378,20 @@ def main():
         allow_reentry=True  # Allow re-entry of conversation handler
     )
     
+    
+    application.add_handler(CommandHandler("start", start))
+
+    # Add conversation handler for creating store
+    start_conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex('^' + BUTTON_CREATE_STORE + '$'), create_store)],
+        states={
+            CREATE_STORE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_store_name)],
+            CREATE_STORE_CONFIRM: [MessageHandler(filters.Regex('^(Yes|No)$'), create_store_confirm)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    application.add_handler(start_conv_handler)
     # Add the conversation handlers to the application
     application.add_handler(add_product_handler)
     application.add_handler(sale_handler)
@@ -1311,6 +1410,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     # Add the /help command handler to the application
     application.add_handler(CommandHandler("help", help_command))
+    
     
     # Start the application
     application.run_polling()

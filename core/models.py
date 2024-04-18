@@ -1,8 +1,7 @@
 from django.db import models
 from django.db.models import Sum
-
-# phone number validatore (validate phone number format, that is +251, or 09, 07, followed by 9 digits)
 from django.core.validators import RegexValidator
+from django.utils.crypto import get_random_string
 
 phone_number_validator = RegexValidator(
     regex=r'^(\+2519\d{8}|\+2517\d{8}|09\d{8}|07\d{8})$',
@@ -18,6 +17,8 @@ class StockXUser(models.Model):
     username = models.CharField(max_length=100, null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
         return f'{self.first_name} {self.last_name} ({self.tg_id})'
@@ -70,6 +71,15 @@ class StoreUser(models.Model):
     store = models.ForeignKey(Store, on_delete=models.CASCADE)
     user = models.ForeignKey(StockXUser, on_delete=models.CASCADE)
     role = models.CharField(max_length=50)  # e.g., "Store Owner", "Sales Manager", "Stock Manager"
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    verified = models.BooleanField(default=False)
+    verification_code = models.CharField(max_length=6, blank=True, null=True)
+
+    def generate_verification_code(self):
+        # Generate a 6-digit random verification code
+        return get_random_string(length=6, allowed_chars='1234567890')
+
     
 class Product(models.Model):
     store = models.ForeignKey(Store, on_delete=models.CASCADE)  # Associate product with a store
